@@ -1,7 +1,7 @@
 # db-desk
 
 A desktop app (Electron + TypeScript) to browse and manage SQL databases on your server.
-PostgreSQL first. MySQL and SQL Server can be added as new drivers (`src/main/db/types.ts`).
+Supports PostgreSQL, MySQL / MariaDB and SQL Server. Each engine is a driver in `src/main/db/`.
 
 ## Features
 
@@ -10,7 +10,7 @@ PostgreSQL first. MySQL and SQL Server can be added as new drivers (`src/main/db
 - Browse table data with paging.
 - Add a row, delete a row (by primary key), drop a table.
 - Every delete asks for confirmation. Dropping a table requires typing the table name.
-- Backup the whole database to a `.sql` file with `pg_dump`.
+- Backup to a `.sql` file: `pg_dump` (PostgreSQL), `mysqldump` (MySQL/MariaDB), or a data-only INSERT export (SQL Server).
 
 ## Run
 
@@ -19,7 +19,7 @@ npm install
 npm start
 ```
 
-Backup needs the PostgreSQL client tools (`pg_dump`) on your PATH, version equal to or newer than your server.
+Backup needs the matching client tool on your PATH: `pg_dump` (same version as the server or newer) or `mysqldump`.
 
 ## Test
 

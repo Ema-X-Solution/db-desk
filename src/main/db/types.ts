@@ -1,4 +1,6 @@
-export type DbType = 'postgres';
+export type DbType = 'postgres' | 'mysql' | 'mssql';
+
+export const DEFAULT_PORTS: Record<DbType, number> = { postgres: 5432, mysql: 3306, mssql: 1433 };
 
 export interface ConnectionConfig {
   id: string;
@@ -42,4 +44,6 @@ export interface DbDriver {
   insertRow(schema: string, table: string, values: Record<string, string | null>): Promise<void>;
   deleteRow(schema: string, table: string, key: Record<string, unknown>): Promise<number>;
   dropTable(schema: string, table: string): Promise<void>;
+  /** Optional JS backup, used when the engine has no dump tool we can run locally (SQL Server). */
+  exportSql?(outFile: string): Promise<void>;
 }

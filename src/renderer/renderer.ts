@@ -1,4 +1,4 @@
-interface Conn { id: string; name: string; type: 'postgres'; host: string; port: number; user: string; password: string; database: string; ssl: boolean }
+interface Conn { id: string; name: string; type: 'postgres' | 'mysql' | 'mssql'; host: string; port: number; user: string; password: string; database: string; ssl: boolean }
 interface TableInfo { schema: string; name: string; rowEstimate: number; sizeBytes: number }
 interface Col { name: string; dataType: string; nullable: boolean; hasDefault: boolean; isPrimaryKey: boolean }
 interface TableData { columns: Col[]; rows: Record<string, unknown>[]; total: number }
@@ -65,7 +65,7 @@ async function renderConns() {
   const box = $('connList'); box.replaceChildren();
   for (const c of list) {
     const row = el('div', { class: 'item' + (c.id === activeConn ? ' active' : '') });
-    row.append(el('span', {}, c.name), el('small', {}, c.database));
+    row.append(el('span', {}, c.name), el('small', {}, `${{ postgres: 'PG', mysql: 'MySQL', mssql: 'MSSQL' }[c.type]} · ${c.database}`));
     row.onclick = () => openConn(c.id);
     row.oncontextmenu = (ev) => { ev.preventDefault(); connDialog(c); };
     box.append(row);
@@ -80,9 +80,12 @@ function connDialog(existing?: Conn) {
       const l = el('label', {}, label); const i = el('input', { type }) as HTMLInputElement; i.value = value; f[key] = i; l.append(i); return l;
     };
     const typeL = el('label', {}, 'Database type'); const sel = el('select') as HTMLSelectElement;
-    sel.append(el('option', { value: 'postgres' }, 'PostgreSQL')); f.type = sel; typeL.append(sel);
+    const PORTS: Record<string, number> = { postgres: 5432, mysql: 3306, mssql: 1433 };
+    for (const [v, n] of [['postgres', 'PostgreSQL'], ['mysql', 'MySQL / MariaDB'], ['mssql', 'SQL Server']]) sel.append(el('option', { value: v }, n));
+    sel.value = existing?.type ?? 'postgres'; f.type = sel; typeL.append(sel);
+    sel.onchange = () => { f.port.value = String(PORTS[sel.value]); };
     box.append(typeL, field('name', 'Name', 'text', existing?.name ?? ''));
-    const r = el('div', { class: 'row' }); r.append(field('host', 'Host', 'text', existing?.host ?? ''), field('port', 'Port', 'number', String(existing?.port ?? 5432))); box.append(r);
+    const r = el('div', { class: 'row' }); r.append(field('host', 'Host', 'text', existing?.host ?? ''), field('port', 'Port', 'number', String(existing?.port ?? PORTS[sel.value]))); box.append(r);
     box.append(field('database', 'Database', 'text', existing?.database ?? ''), field('user', 'User', 'text', existing?.user ?? ''),
       field('password', existing ? 'Password (leave empty to keep)' : 'Password', 'password'));
     const sslL = el('label', {}, 'Use SSL'); const ssl = el('input', { type: 'checkbox' }) as HTMLInputElement; ssl.checked = existing?.ssl ?? false; sslL.append(ssl); box.append(sslL);
@@ -91,7 +94,7 @@ function connDialog(existing?: Conn) {
     const cancel = el('button', {}, 'Cancel'); cancel.onclick = close;
     const save = el('button', { class: 'primary' }, 'Save & connect');
     save.onclick = async () => {
-      const c: Conn = { id: existing?.id ?? '', name: f.name.value || f.host.value, type: 'postgres', host: f.host.value, port: Number(f.port.value) || 5432, user: f.user.value, password: f.password.value, database: f.database.value, ssl: ssl.checked };
+      const c: Conn = { id: existing?.id ?? '', name: f.name.value || f.host.value, type: sel.value as Conn['type'], host: f.host.value, port: Number(f.port.value) || PORTS[sel.value], user: f.user.value, password: f.password.value, database: f.database.value, ssl: ssl.checked };
       const id = await guard(() => api.saveConnection(c)); if (!id) return;
       close(); await renderConns(); openConn(id);
     };

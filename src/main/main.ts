@@ -1,9 +1,11 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
-import { pgDump } from './backup';
+import { mysqlDump, pgDump } from './backup';
 import { DbDriver, ConnectionConfig } from './db/types';
 import { PostgresDriver } from './db/postgres';
+import { MysqlDriver } from './db/mysql';
+import { MssqlDriver } from './db/mssql';
 import { loadConnections, removeConnection, saveConnection } from './store';
 
 let driver: DbDriver | null = null;
@@ -17,6 +19,8 @@ function need(): DbDriver {
 function connect(c: ConnectionConfig): Promise<DbDriver> {
   switch (c.type) {
     case 'postgres': return PostgresDriver.connect(c);
+    case 'mysql': return MysqlDriver.connect(c);
+    case 'mssql': return MssqlDriver.connect(c);
     default: throw new Error('Unsupported database type: ' + c.type);
   }
 }
@@ -51,7 +55,10 @@ function registerIpc() {
     const stamp = new Date().toISOString().slice(0, 10);
     const r = await dialog.showSaveDialog({ defaultPath: `${active.database}-${stamp}.sql`, filters: [{ name: 'SQL', extensions: ['sql'] }] });
     if (r.canceled || !r.filePath) return null;
-    await pgDump(active, r.filePath);
+    if (active.type === 'postgres') await pgDump(active, r.filePath);
+    else if (active.type === 'mysql') await mysqlDump(active, r.filePath);
+    else if (need().exportSql) await need().exportSql!(r.filePath);
+    else throw new Error('Backup is not supported for this database type');
     return r.filePath;
   });
 }
