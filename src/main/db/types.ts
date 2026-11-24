@@ -1,3 +1,5 @@
+import type { ScriptResult } from './script';
+
 export type DbType = 'postgres' | 'mysql' | 'mssql';
 
 export const DEFAULT_PORTS: Record<DbType, number> = { postgres: 5432, mysql: 3306, mssql: 1433 };
@@ -60,6 +62,11 @@ export interface DbDriver {
   insertRow(schema: string, table: string, values: Record<string, string | null>): Promise<void>;
   deleteRow(schema: string, table: string, key: Record<string, unknown>): Promise<number>;
   dropTable(schema: string, table: string): Promise<void>;
+  /**
+   * Runs a multi-statement script in ONE transaction. commit=false always rolls back (dry run).
+   * Any error rolls everything back and is thrown. Call checkScript first.
+   */
+  runScript(sql: string, commit: boolean): Promise<ScriptResult>;
   /** Optional JS backup, used when the engine has no dump tool we can run locally (SQL Server). */
   exportSql?(outFile: string): Promise<void>;
 }

@@ -66,6 +66,10 @@ function registerIpc() {
   ipcMain.handle('db:data', (_e, s: string, t: string, limit: number, offset: number, search?: string) => need().tableData(s, t, limit, offset, typeof search === 'string' ? search.slice(0, 200) : undefined));
   ipcMain.handle('db:insert', (_e, s: string, t: string, v: Record<string, string | null>) => need().insertRow(s, t, v));
   ipcMain.handle('db:delete', (_e, s: string, t: string, key: Record<string, unknown>) => need().deleteRow(s, t, key));
+  ipcMain.handle('db:script', (_e, sql: string, commit: boolean) => {
+    if (typeof sql !== 'string') throw new Error('Invalid script');
+    return need().runScript(sql, commit === true);
+  });
   ipcMain.handle('db:drop', (_e, s: string, t: string) => need().dropTable(s, t));
   const toolFor = (c: ConnectionConfig): ToolName | null => (c.type === 'postgres' ? 'pg_dump' : c.type === 'mysql' ? 'mysqldump' : null);
   ipcMain.handle('db:backup', async () => {

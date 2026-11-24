@@ -1,4 +1,5 @@
 import * as mysql from 'mysql2/promise';
+import { checkScript, makeResult, ScriptResult } from './script';
 import { ColumnInfo, ConnectionConfig, DbDriver, TableData, TableInfo, likeEscape } from './types';
 
 const q = (id: string) => '`' + id.replace(/`/g, '``') + '`';
@@ -10,7 +11,7 @@ export class MysqlDriver implements DbDriver {
   static async connect(c: ConnectionConfig): Promise<MysqlDriver> {
     const conn = await mysql.createConnection({
       host: c.host, port: c.port, user: c.user, password: c.password, database: c.database,
-      ssl: c.ssl ? { rejectUnauthorized: false } : undefined, connectTimeout: 8000, dateStrings: true, supportBigNumbers: true, bigNumberStrings: true,
+      ssl: c.ssl ? { rejectUnauthorized: false } : undefined, connectTimeout: 8000, multipleStatements: true, dateStrings: true, supportBigNumbers: true, bigNumberStrings: true,
     });
     return new MysqlDriver(conn, c.database);
   }
@@ -72,6 +73,25 @@ export class MysqlDriver implements DbDriver {
       await this.conn.commit();
       return res.affectedRows as number;
     } catch (e) { await this.conn.rollback(); throw e; }
+  }
+
+  async runScript(sql: string, commit: boolean): Promise<ScriptResult> {
+    checkScript('mysql', sql, commit);
+    await this.conn.beginTransaction();
+    try {
+      const [rows, fields]: any = await this.conn.query(sql);
+      // One statement: rows/fields belong to it. Several: both are parallel arrays, one entry per statement.
+      const multi = Array.isArray(fields) && fields.every((f: any) => f === undefined || Array.isArray(f));
+      const pairs: [any, any][] = multi ? (rows as any[]).map((r, i) => [r, fields[i]]) : [[rows, fields]];
+      const results = pairs.map(([r, f]) => Array.isArray(f)
+        ? makeResult('SELECT', (r as any[]).length, f.map((c: any) => c.name), (r as any[]).map((row) => f.map((c: any) => row[c.name])))
+        : makeResult('OK', r?.affectedRows ?? null, [], []));
+      if (commit) await this.conn.commit(); else await this.conn.rollback();
+      return { results, committed: commit };
+    } catch (e) {
+      await this.conn.rollback().catch(() => {});
+      throw e;
+    }
   }
 
   async dropTable(schema: string, table: string) {

@@ -1,5 +1,6 @@
 import * as sql from 'mssql';
 import * as fs from 'fs';
+import { checkScript, makeResult, ScriptResult } from './script';
 import { ColumnInfo, ConnectionConfig, DbDriver, TableData, TableInfo, likeEscape } from './types';
 
 const q = (id: string) => '[' + id.replace(/]/g, ']]') + ']';
@@ -98,6 +99,29 @@ export class MssqlDriver implements DbDriver {
   }
 
   /** Data-only backup as INSERT statements. SQL Server's native BACKUP writes on the server, so we export data instead. */
+  async runScript(script: string, commit: boolean): Promise<ScriptResult> {
+    checkScript('mssql', script, commit);
+    const tx = new sql.Transaction(this.pool);
+    await tx.begin();
+    try {
+      const req = new sql.Request(tx);
+      (req as any).arrayRowMode = true;
+      const res: any = await req.query('SET XACT_ABORT ON;\n' + script);
+      const sets: any[] = res.recordsets ?? [];
+      const results = sets.map((rs, i) => {
+        const cols = Object.values(rs.columns ?? {}).sort((a: any, b: any) => a.index - b.index).map((c: any) => c.name);
+        return makeResult('SELECT', rs.length, cols, rs);
+      });
+      const changed = (res.rowsAffected as number[] | undefined)?.reduce((a, b) => a + b, 0) ?? 0;
+      if (!sets.length || changed) results.push(makeResult('OK', changed, [], []));
+      if (commit) await tx.commit(); else await tx.rollback();
+      return { results, committed: commit };
+    } catch (e) {
+      await tx.rollback().catch(() => {});
+      throw e;
+    }
+  }
+
   async exportSql(outFile: string) {
     const out = fs.createWriteStream(outFile);
     const w = (s: string) => new Promise<void>((res) => (out.write(s) ? res() : out.once('drain', () => res())));

@@ -1,3 +1,5 @@
+import { initSqlTab } from './sqlTab.js';
+
 interface Ssh { enabled: boolean; host: string; port: number; user: string; password: string; privateKeyPath: string; passphrase: string }
 interface Conn {ssh?: Ssh;  id: string; name: string; type: 'postgres' | 'mysql' | 'mssql'; host: string; port: number; user: string; password: string; database: string; ssl: boolean }
 interface TableInfo { schema: string; name: string; rowEstimate: number; sizeBytes: number }
@@ -10,6 +12,7 @@ declare const api: {
   data(s: string, t: string, limit: number, offset: number, search?: string): Promise<TableData>;
   insert(s: string, t: string, v: Record<string, string | null>): Promise<void>;
   del(s: string, t: string, key: Record<string, unknown>): Promise<number>;
+  script(sql: string, commit: boolean): Promise<{ results: { command: string; rowCount: number | null; columns: string[]; rows: (string | null)[][]; truncated: boolean }[]; committed: boolean }>;
   drop(s: string, t: string): Promise<void>; backup(): Promise<string | null>;
   toolStatus(): Promise<{ tool: string; path: string | null }[]>; pickTool(t: string): Promise<string | null>;
 };
@@ -122,7 +125,7 @@ function renderTables(info: { size: number; tables: TableInfo[] }) {
   for (const t of info.tables) {
     const row = el('div', { class: 'item' + (current && current.schema === t.schema && current.name === t.name ? ' active' : '') });
     row.append(el('span', {}, t.schema === 'public' ? t.name : `${t.schema}.${t.name}`), el('small', {}, bytes(t.sizeBytes)));
-    row.onclick = () => { current = { schema: t.schema, name: t.name }; offset = 0; ($('search') as HTMLInputElement).value = ''; loadTable(); renderTables(info); };
+    row.onclick = () => { current = { schema: t.schema, name: t.name }; offset = 0; ($('search') as HTMLInputElement).value = ''; sqlTab.hide(); loadTable(); renderTables(info); };
     box.append(row);
   }
   const bk = el('button', { class: 'wide' }, 'Backup database…'); bk.style.marginTop = '10px';
@@ -165,7 +168,7 @@ async function toolDialog(missing?: string, retry = false) {
 
 async function openConn(id: string) {
   const info = await guard(() => api.open(id)); if (!info) return;
-  activeConn = id; current = null; $('view').hidden = true; $('welcome').hidden = false; $('welcome').textContent = 'Connected. Pick a table.';
+  sqlTab.reset(); sqlTab.hide(); activeConn = id; current = null; $('view').hidden = true; $('welcome').hidden = false; $('welcome').textContent = 'Connected. Pick a table.';
   renderTables(info); renderConns();
 }
 
@@ -238,6 +241,8 @@ function addRowDialog() {
 
 async function refreshTables() { const i = await guard(() => api.tables()); if (i) renderTables(i); }
 
+const sqlTab = initSqlTab({ api, $, el, dialog, toast, guard, runBackup, onCommitted: () => { refreshTables(); } });
+$('openSql').onclick = () => sqlTab.show();
 $('newConn').onclick = () => connDialog();
 $('addRow').onclick = addRowDialog;
 $('refresh').onclick = () => { loadTable(); refreshTables(); };

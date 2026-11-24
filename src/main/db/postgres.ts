@@ -1,4 +1,5 @@
 import { Client } from 'pg';
+import { checkScript, makeResult, ScriptResult } from './script';
 import { ColumnInfo, ConnectionConfig, DbDriver, TableData, TableInfo, likeEscape } from './types';
 
 const q = (id: string) => '"' + id.replace(/"/g, '""') + '"';
@@ -92,6 +93,23 @@ export class PostgresDriver implements DbDriver {
       return r.rowCount ?? 0;
     } catch (e) {
       await this.client.query('ROLLBACK');
+      throw e;
+    }
+  }
+
+  async runScript(sql: string, commit: boolean): Promise<ScriptResult> {
+    checkScript('postgres', sql, commit);
+    await this.client.query('BEGIN');
+    try {
+      await this.client.query("SET LOCAL statement_timeout = '300s'");
+      // Simple protocol: all statements in one call, one result each. rowMode keeps duplicate column names.
+      const res: any = await this.client.query({ text: sql, rowMode: 'array' });
+      const list: any[] = Array.isArray(res) ? res : [res];
+      const results = list.map((r) => makeResult(r.command ?? '', r.rowCount ?? null, (r.fields ?? []).map((f: any) => f.name), r.rows ?? []));
+      await this.client.query(commit ? 'COMMIT' : 'ROLLBACK');
+      return { results, committed: commit };
+    } catch (e) {
+      await this.client.query('ROLLBACK').catch(() => {});
       throw e;
     }
   }
