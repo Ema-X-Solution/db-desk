@@ -1,7 +1,8 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
-import { mysqlDump, pgDump } from './backup';
+import { findTool, mysqlDump, pgDump, ToolName, ToolNotFoundError } from './backup';
+import { getToolPath, setToolPath } from './settings';
 import { DbDriver, ConnectionConfig } from './db/types';
 import { PostgresDriver } from './db/postgres';
 import { MysqlDriver } from './db/mysql';
@@ -62,20 +63,36 @@ function registerIpc() {
   });
   ipcMain.handle('conn:close', () => closeAll());
   ipcMain.handle('db:tables', async () => ({ size: await need().databaseSize(), tables: await need().listTables() }));
-  ipcMain.handle('db:data', (_e, s: string, t: string, limit: number, offset: number) => need().tableData(s, t, limit, offset));
+  ipcMain.handle('db:data', (_e, s: string, t: string, limit: number, offset: number, search?: string) => need().tableData(s, t, limit, offset, typeof search === 'string' ? search.slice(0, 200) : undefined));
   ipcMain.handle('db:insert', (_e, s: string, t: string, v: Record<string, string | null>) => need().insertRow(s, t, v));
   ipcMain.handle('db:delete', (_e, s: string, t: string, key: Record<string, unknown>) => need().deleteRow(s, t, key));
+  ipcMain.handle('db:script', (_e, sql: string, commit: boolean) => {
+    if (typeof sql !== 'string') throw new Error('Invalid script');
+    return need().runScript(sql, commit === true);
+  });
   ipcMain.handle('db:drop', (_e, s: string, t: string) => need().dropTable(s, t));
+  const toolFor = (c: ConnectionConfig): ToolName | null => (c.type === 'postgres' ? 'pg_dump' : c.type === 'mysql' ? 'mysqldump' : null);
   ipcMain.handle('db:backup', async () => {
     if (!active) throw new Error('Not connected');
+    const conn = active;
+    const tool = toolFor(conn);
+    // Check the tool before asking where to save, so a missing tool fails fast.
+    if (tool && !findTool(tool, getToolPath(tool))) throw new ToolNotFoundError(tool);
     const stamp = new Date().toISOString().slice(0, 10);
-    const r = await dialog.showSaveDialog({ defaultPath: `${active.database}-${stamp}.sql`, filters: [{ name: 'SQL', extensions: ['sql'] }] });
+    const r = await dialog.showSaveDialog({ defaultPath: `${conn.database}-${stamp}.sql`, filters: [{ name: 'SQL', extensions: ['sql'] }] });
     if (r.canceled || !r.filePath) return null;
-    if (active.type === 'postgres') await pgDump(active, r.filePath);
-    else if (active.type === 'mysql') await mysqlDump(active, r.filePath);
+    if (conn.type === 'postgres') await pgDump(conn, r.filePath, getToolPath('pg_dump'));
+    else if (conn.type === 'mysql') await mysqlDump(conn, r.filePath, getToolPath('mysqldump'));
     else if (need().exportSql) await need().exportSql!(r.filePath);
     else throw new Error('Backup is not supported for this database type');
     return r.filePath;
+  });
+  ipcMain.handle('tool:status', () => (['pg_dump', 'mysqldump'] as ToolName[]).map((t) => ({ tool: t, path: findTool(t, getToolPath(t)) })));
+  ipcMain.handle('tool:pick', async (_e, tool: ToolName) => {
+    const r = await dialog.showOpenDialog({ title: `Select ${tool}`, properties: ['openFile'], filters: process.platform === 'win32' ? [{ name: 'Program', extensions: ['exe'] }] : [] });
+    if (r.canceled || !r.filePaths[0]) return null;
+    setToolPath(tool, r.filePaths[0]);
+    return r.filePaths[0];
   });
 }
 

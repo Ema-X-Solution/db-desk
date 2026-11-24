@@ -1,3 +1,5 @@
+import { initSqlTab } from './sqlTab.js';
+
 interface Ssh { enabled: boolean; host: string; port: number; user: string; password: string; privateKeyPath: string; passphrase: string }
 interface Conn {ssh?: Ssh;  id: string; name: string; type: 'postgres' | 'mysql' | 'mssql'; host: string; port: number; user: string; password: string; database: string; ssl: boolean }
 interface TableInfo { schema: string; name: string; rowEstimate: number; sizeBytes: number }
@@ -7,10 +9,12 @@ declare const api: {
   listConnections(): Promise<Conn[]>; saveConnection(c: Conn): Promise<string>; removeConnection(id: string): Promise<void>;
   open(id: string): Promise<{ size: number; tables: TableInfo[] }>; close(): Promise<void>;
   tables(): Promise<{ size: number; tables: TableInfo[] }>;
-  data(s: string, t: string, limit: number, offset: number): Promise<TableData>;
+  data(s: string, t: string, limit: number, offset: number, search?: string): Promise<TableData>;
   insert(s: string, t: string, v: Record<string, string | null>): Promise<void>;
   del(s: string, t: string, key: Record<string, unknown>): Promise<number>;
+  script(sql: string, commit: boolean): Promise<{ results: { command: string; rowCount: number | null; columns: string[]; rows: (string | null)[][]; truncated: boolean }[]; committed: boolean }>;
   drop(s: string, t: string): Promise<void>; backup(): Promise<string | null>;
+  toolStatus(): Promise<{ tool: string; path: string | null }[]>; pickTool(t: string): Promise<string | null>;
 };
 
 const PAGE = 50;
@@ -121,17 +125,50 @@ function renderTables(info: { size: number; tables: TableInfo[] }) {
   for (const t of info.tables) {
     const row = el('div', { class: 'item' + (current && current.schema === t.schema && current.name === t.name ? ' active' : '') });
     row.append(el('span', {}, t.schema === 'public' ? t.name : `${t.schema}.${t.name}`), el('small', {}, bytes(t.sizeBytes)));
-    row.onclick = () => { current = { schema: t.schema, name: t.name }; offset = 0; loadTable(); renderTables(info); };
+    row.onclick = () => { current = { schema: t.schema, name: t.name }; offset = 0; ($('search') as HTMLInputElement).value = ''; sqlTab.hide(); loadTable(); renderTables(info); };
     box.append(row);
   }
   const bk = el('button', { class: 'wide' }, 'Backup database…'); bk.style.marginTop = '10px';
-  bk.onclick = async () => { const p = await guard(() => api.backup()); if (p) toast('Backup saved: ' + p); };
-  box.append(bk);
+  bk.onclick = () => runBackup();
+  const bt = el('button', { class: 'wide link' }, 'Backup tool path…'); bt.style.marginTop = '6px';
+  bt.onclick = () => toolDialog();
+  box.append(bk, bt);
+}
+
+async function runBackup() {
+  try {
+    const p = await api.backup();
+    if (p) toast('Backup saved: ' + p);
+  } catch (e) {
+    const msg = String((e as Error).message || e);
+    const m = msg.match(/TOOL_NOT_FOUND:(pg_dump|mysqldump)/);
+    if (m) toolDialog(m[1], true); else toast(msg.replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), true);
+  }
+}
+
+/** Shows where the dump tools were found and lets the user pick one with a file dialog. */
+async function toolDialog(missing?: string, retry = false) {
+  const status = await api.toolStatus();
+  dialog((box, close) => {
+    box.append(el('h3', {}, missing ? `${missing} was not found` : 'Backup tools'));
+    if (missing) box.append(el('div', {}, `db-desk looked in PATH and the usual install folders (PostgreSQL, pgAdmin 4). Choose the file yourself, for example pgAdmin 4\\runtime\\${missing}.exe.`));
+    for (const s of status) {
+      const row = el('div', { class: 'toolrow' });
+      row.append(el('div', {}, s.tool), el('div', { class: 'muted' }, s.path ?? 'not found'));
+      const pick = el('button', {}, 'Choose file…');
+      pick.onclick = async () => {
+        const p = await guard(() => api.pickTool(s.tool)); if (!p) return;
+        close(); toast(`${s.tool}: ${p}`); if (retry && s.tool === missing) runBackup(); else toolDialog();
+      };
+      row.append(pick); box.append(row);
+    }
+    const a = el('div', { class: 'actions' }); const c = el('button', {}, 'Close'); c.onclick = close; a.append(c); box.append(a);
+  });
 }
 
 async function openConn(id: string) {
   const info = await guard(() => api.open(id)); if (!info) return;
-  activeConn = id; current = null; $('view').hidden = true; $('welcome').hidden = false; $('welcome').textContent = 'Connected. Pick a table.';
+  sqlTab.reset(); sqlTab.hide(); activeConn = id; current = null; $('view').hidden = true; $('welcome').hidden = false; $('welcome').textContent = 'Connected. Pick a table.';
   renderTables(info); renderConns();
 }
 
@@ -143,10 +180,11 @@ function cellText(v: unknown) {
 
 async function loadTable() {
   if (!current) return;
-  const d = await guard(() => api.data(current!.schema, current!.name, PAGE, offset)); if (!d) return;
+  const term = ($('search') as HTMLInputElement).value.trim();
+  const d = await guard(() => api.data(current!.schema, current!.name, PAGE, offset, term || undefined)); if (!d) return;
   data = d;
   $('welcome').hidden = true; $('view').hidden = false;
-  $('title').textContent = `${current.schema}.${current.name}  (${d.total} rows)`;
+  $('title').textContent = `${current.schema}.${current.name}  (${d.total} rows${term ? ' matching "' + term + '"' : ''})`;
   const grid = $('grid'); grid.replaceChildren();
   const head = el('tr');
   for (const c of d.columns) { const th = el('th', {}, (c.isPrimaryKey ? '[PK] ' : '') + c.name); th.append(el('small', {}, c.dataType)); head.append(th); }
@@ -203,9 +241,13 @@ function addRowDialog() {
 
 async function refreshTables() { const i = await guard(() => api.tables()); if (i) renderTables(i); }
 
+const sqlTab = initSqlTab({ api, $, el, dialog, toast, guard, runBackup, onCommitted: () => { refreshTables(); } });
+$('openSql').onclick = () => sqlTab.show();
 $('newConn').onclick = () => connDialog();
 $('addRow').onclick = addRowDialog;
 $('refresh').onclick = () => { loadTable(); refreshTables(); };
+let searchTimer: number | undefined;
+$('search').oninput = () => { clearTimeout(searchTimer); searchTimer = window.setTimeout(() => { offset = 0; loadTable(); }, 300); };
 $('prev').onclick = () => { offset = Math.max(0, offset - PAGE); loadTable(); };
 $('next').onclick = () => { offset += PAGE; loadTable(); };
 $('dropTable').onclick = async () => {

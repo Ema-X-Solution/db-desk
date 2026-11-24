@@ -26,6 +26,11 @@ const { pgDump } = require('../dist/main/backup');
     await d.insertRow('public', 'products', { name: 'Belt', price: '90' });
     await d.insertRow('public', 'products', { name: 'Hat' });
     t = await d.tableData('public', 'products', 2, 0); assert.equal(t.total, 5); assert.equal(t.rows.length, 2);
+    t = await d.tableData('public', 'products', 50, 0, 'sCaRf'); assert.equal(t.total, 1); assert.equal(t.rows[0].name, 'Scarf');
+    t = await d.tableData('public', 'products', 50, 0, '450'); assert.equal(t.total, 1); // matches number columns too
+    t = await d.tableData('public', 'products', 50, 0, '%'); assert.equal(t.total, 0); // wildcard is literal
+    t = await d.tableData('public', 'products', 50, 0, "x'; DROP TABLE products;--"); assert.equal(t.total, 0);
+    t = await d.tableData('public', 'products', 50, 0, 'DROP TABLE'); assert.equal(t.total, 1); // still there, found as text
     assert.equal(await d.deleteRow('public', 'products', { id: 1 }), 1);
     assert.equal((await d.tableData('public', 'products', 50, 0)).total, 4);
     try {

@@ -9,9 +9,12 @@ contextBridge.exposeInMainWorld('api', {
   open: (id: string) => call('conn:open', id),
   close: () => call('conn:close'),
   tables: () => call('db:tables'),
-  data: (s: string, t: string, limit: number, offset: number) => call('db:data', s, t, limit, offset),
+  data: (s: string, t: string, limit: number, offset: number, search?: string) => call('db:data', s, t, limit, offset, search),
   insert: (s: string, t: string, v: unknown) => call('db:insert', s, t, v),
   del: (s: string, t: string, key: unknown) => call('db:delete', s, t, key),
+  script: (sql: string, commit: boolean) => call('db:script', sql, commit),
   drop: (s: string, t: string) => call('db:drop', s, t),
   backup: () => call('db:backup'),
+  toolStatus: () => call('tool:status'),
+  pickTool: (t: string) => call('tool:pick', t),
 });

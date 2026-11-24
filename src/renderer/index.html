@@ -14,6 +14,7 @@
   <div id="tablesBox" hidden>
     <div class="sect">Tables</div>
     <div id="dbInfo" class="muted"></div>
+    <button id="openSql" class="wide">SQL editor…</button>
     <div id="tableList"></div>
   </div>
 </aside>
@@ -23,6 +24,7 @@
     <div class="bar">
       <h2 id="title"></h2>
       <div class="spacer"></div>
+      <input id="search" type="search" placeholder="Search in this table…" autocomplete="off">
       <button id="addRow">Add row</button>
       <button id="refresh">Refresh</button>
       <button id="dropTable" class="danger">Drop table</button>
@@ -31,6 +33,17 @@
     <div class="bar pager">
       <button id="prev">Prev</button><span id="pageInfo" class="muted"></span><button id="next">Next</button>
     </div>
+  </div>
+<div id="sqlView" hidden>
+    <div class="bar">
+      <h2>SQL</h2>
+      <div class="spacer"></div>
+      <button id="sqlDry" class="primary">Dry run (rolls back)</button>
+      <button id="sqlRun" class="danger" disabled>Run and commit…</button>
+    </div>
+    <textarea id="sqlText" spellcheck="false" placeholder="Paste your SQL here. Several statements are fine.&#10;Do not add BEGIN / COMMIT: db-desk wraps the whole script in one transaction."></textarea>
+    <div id="sqlStatus" class="sqlstatus"></div>
+    <div id="sqlOut"></div>
   </div>
 </main>
 <div id="modal" hidden><div id="dialog"></div></div>

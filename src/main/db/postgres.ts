@@ -1,5 +1,6 @@
 import { Client } from 'pg';
-import { ColumnInfo, ConnectionConfig, DbDriver, TableData, TableInfo } from './types';
+import { checkScript, makeResult, ScriptResult } from './script';
+import { ColumnInfo, ConnectionConfig, DbDriver, TableData, TableInfo, likeEscape } from './types';
 
 const q = (id: string) => '"' + id.replace(/"/g, '""') + '"';
 const qt = (schema: string, table: string) => `${q(schema)}.${q(table)}`;
@@ -53,13 +54,16 @@ export class PostgresDriver implements DbDriver {
     return r.rows.map((x) => ({ name: x.name, dataType: x.type, nullable: x.nullable, hasDefault: x.has_default, isPrimaryKey: x.pk }));
   }
 
-  async tableData(schema: string, table: string, limit: number, offset: number): Promise<TableData> {
+  async tableData(schema: string, table: string, limit: number, offset: number, search?: string): Promise<TableData> {
     const columns = await this.columns(schema, table);
     if (!columns.length) throw new Error(`Table ${schema}.${table} not found`);
     const pk = columns.filter((c) => c.isPrimaryKey).map((c) => q(c.name));
     const order = pk.length ? ' ORDER BY ' + pk.join(', ') : '';
-    const count = await this.client.query(`SELECT count(*)::bigint AS n FROM ${qt(schema, table)}`);
-    const rows = await this.client.query(`SELECT * FROM ${qt(schema, table)}${order} LIMIT $1 OFFSET $2`, [limit, offset]);
+    const term = search?.trim();
+    const where = term ? ' WHERE ' + columns.map((c) => `${q(c.name)}::text ILIKE $1 ESCAPE '\\'`).join(' OR ') : '';
+    const sp = term ? ['%' + likeEscape(term) + '%'] : [];
+    const count = await this.client.query(`SELECT count(*)::bigint AS n FROM ${qt(schema, table)}${where}`, sp);
+    const rows = await this.client.query(`SELECT * FROM ${qt(schema, table)}${where}${order} LIMIT $${sp.length + 1} OFFSET $${sp.length + 2}`, [...sp, limit, offset]);
     return { columns, rows: rows.rows, total: Number(count.rows[0].n) };
   }
 
@@ -89,6 +93,23 @@ export class PostgresDriver implements DbDriver {
       return r.rowCount ?? 0;
     } catch (e) {
       await this.client.query('ROLLBACK');
+      throw e;
+    }
+  }
+
+  async runScript(sql: string, commit: boolean): Promise<ScriptResult> {
+    checkScript('postgres', sql, commit);
+    await this.client.query('BEGIN');
+    try {
+      await this.client.query("SET LOCAL statement_timeout = '300s'");
+      // Simple protocol: all statements in one call, one result each. rowMode keeps duplicate column names.
+      const res: any = await this.client.query({ text: sql, rowMode: 'array' });
+      const list: any[] = Array.isArray(res) ? res : [res];
+      const results = list.map((r) => makeResult(r.command ?? '', r.rowCount ?? null, (r.fields ?? []).map((f: any) => f.name), r.rows ?? []));
+      await this.client.query(commit ? 'COMMIT' : 'ROLLBACK');
+      return { results, committed: commit };
+    } catch (e) {
+      await this.client.query('ROLLBACK').catch(() => {});
       throw e;
     }
   }

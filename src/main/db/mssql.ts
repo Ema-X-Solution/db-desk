@@ -1,6 +1,7 @@
 import * as sql from 'mssql';
 import * as fs from 'fs';
-import { ColumnInfo, ConnectionConfig, DbDriver, TableData, TableInfo } from './types';
+import { checkScript, makeResult, ScriptResult } from './script';
+import { ColumnInfo, ConnectionConfig, DbDriver, TableData, TableInfo, likeEscape } from './types';
 
 const q = (id: string) => '[' + id.replace(/]/g, ']]') + ']';
 const qt = (schema: string, table: string) => `${q(schema)}.${q(table)}`;
@@ -53,14 +54,19 @@ export class MssqlDriver implements DbDriver {
     return r.recordset.map((x: any) => ({ name: x.name, dataType: x.type, nullable: !!x.nullable, hasDefault: !!x.has_default, isPrimaryKey: !!x.pk }));
   }
 
-  async tableData(schema: string, table: string, limit: number, offset: number): Promise<TableData> {
+  async tableData(schema: string, table: string, limit: number, offset: number, search?: string): Promise<TableData> {
     const columns = await this.columns(schema, table);
     if (!columns.length) throw new Error(`Table ${schema}.${table} not found`);
     const pk = columns.filter((c) => c.isPrimaryKey).map((c) => q(c.name));
     const order = pk.length ? pk.join(', ') : '(SELECT NULL)';
-    const cnt = await this.req().query(`SELECT COUNT_BIG(*) AS n FROM ${qt(schema, table)}`);
-    const rows = await this.req().input('o', sql.Int, offset).input('l', sql.Int, limit)
-      .query(`SELECT * FROM ${qt(schema, table)} ORDER BY ${order} OFFSET @o ROWS FETCH NEXT @l ROWS ONLY`);
+    const term = search?.trim();
+    const skip = /binary|image|geometry|geography|hierarchyid|timestamp|rowversion/i;
+    const sc = columns.filter((c) => !skip.test(c.dataType));
+    const where = term && sc.length ? ' WHERE ' + sc.map((c) => `CAST(${q(c.name)} AS NVARCHAR(MAX)) LIKE @s ESCAPE '\\'`).join(' OR ') : '';
+    const like = '%' + likeEscape(term || '') + '%';
+    const cnt = await this.req().input('s', sql.NVarChar, like).query(`SELECT COUNT_BIG(*) AS n FROM ${qt(schema, table)}${where}`);
+    const rows = await this.req().input('s', sql.NVarChar, like).input('o', sql.Int, offset).input('l', sql.Int, limit)
+      .query(`SELECT * FROM ${qt(schema, table)}${where} ORDER BY ${order} OFFSET @o ROWS FETCH NEXT @l ROWS ONLY`);
     return { columns, rows: rows.recordset as Record<string, unknown>[], total: Number(cnt.recordset[0].n) };
   }
 
@@ -93,6 +99,29 @@ export class MssqlDriver implements DbDriver {
   }
 
   /** Data-only backup as INSERT statements. SQL Server's native BACKUP writes on the server, so we export data instead. */
+  async runScript(script: string, commit: boolean): Promise<ScriptResult> {
+    checkScript('mssql', script, commit);
+    const tx = new sql.Transaction(this.pool);
+    await tx.begin();
+    try {
+      const req = new sql.Request(tx);
+      (req as any).arrayRowMode = true;
+      const res: any = await req.query('SET XACT_ABORT ON;\n' + script);
+      const sets: any[] = res.recordsets ?? [];
+      const results = sets.map((rs, i) => {
+        const cols = Object.values(rs.columns ?? {}).sort((a: any, b: any) => a.index - b.index).map((c: any) => c.name);
+        return makeResult('SELECT', rs.length, cols, rs);
+      });
+      const changed = (res.rowsAffected as number[] | undefined)?.reduce((a, b) => a + b, 0) ?? 0;
+      if (!sets.length || changed) results.push(makeResult('OK', changed, [], []));
+      if (commit) await tx.commit(); else await tx.rollback();
+      return { results, committed: commit };
+    } catch (e) {
+      await tx.rollback().catch(() => {});
+      throw e;
+    }
+  }
+
   async exportSql(outFile: string) {
     const out = fs.createWriteStream(outFile);
     const w = (s: string) => new Promise<void>((res) => (out.write(s) ? res() : out.once('drain', () => res())));

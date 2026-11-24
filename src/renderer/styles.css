@@ -39,3 +39,19 @@ input, select { background: #12151c; border: 1px solid #343c4f; border-radius: 6
 #toast { position: fixed; bottom: 18px; right: 18px; background: #262c39; border: 1px solid #343c4f; padding: 10px 14px; border-radius: 8px; max-width: 420px; }
 #toast.err { border-color: #8a2d38; background: #3a1a1f; }
 .sshbox { display: flex; flex-direction: column; gap: 10px; border-left: 2px solid #343c4f; padding-left: 10px; }
+.toolrow { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; border-top: 1px solid #262c39; }
+.toolrow .muted { word-break: break-all; }
+button.link { background: none; border: 0; color: #8791a7; text-decoration: underline; }
+#search { width: 260px; padding: 5px 8px; margin-right: 8px; }
+.bar button { white-space: nowrap; }
+#sqlView { display: flex; flex-direction: column; height: 100%; }
+#sqlView[hidden] { display: none; }
+#sqlText { flex: 0 0 240px; resize: vertical; margin: 12px 14px 0; padding: 10px; background: #0d1017; color: #e6e9ef; border: 1px solid #343c4f; border-radius: 6px; font: 13px ui-monospace, Consolas, monospace; tab-size: 2; }
+.sqlstatus { padding: 8px 14px; min-height: 34px; color: #8791a7; }
+.sqlstatus.ok { color: #6fcf97; }
+.sqlstatus.err { color: #eb7b86; }
+#sqlOut { flex: 1; overflow: auto; padding: 0 14px 14px; }
+.sqlres { margin-bottom: 14px; }
+.sqlhead { font-weight: 600; padding: 4px 0; }
+.sqlgrid { max-height: 320px; overflow: auto; border: 1px solid #262c39; border-radius: 6px; }
+#openSql { margin: 8px 0 4px; }

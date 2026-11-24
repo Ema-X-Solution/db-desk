@@ -1,5 +1,6 @@
 import * as mysql from 'mysql2/promise';
-import { ColumnInfo, ConnectionConfig, DbDriver, TableData, TableInfo } from './types';
+import { checkScript, makeResult, ScriptResult } from './script';
+import { ColumnInfo, ConnectionConfig, DbDriver, TableData, TableInfo, likeEscape } from './types';
 
 const q = (id: string) => '`' + id.replace(/`/g, '``') + '`';
 const qt = (schema: string, table: string) => `${q(schema)}.${q(table)}`;
@@ -10,7 +11,7 @@ export class MysqlDriver implements DbDriver {
   static async connect(c: ConnectionConfig): Promise<MysqlDriver> {
     const conn = await mysql.createConnection({
       host: c.host, port: c.port, user: c.user, password: c.password, database: c.database,
-      ssl: c.ssl ? { rejectUnauthorized: false } : undefined, connectTimeout: 8000, dateStrings: true, supportBigNumbers: true, bigNumberStrings: true,
+      ssl: c.ssl ? { rejectUnauthorized: false } : undefined, connectTimeout: 8000, multipleStatements: true, dateStrings: true, supportBigNumbers: true, bigNumberStrings: true,
     });
     return new MysqlDriver(conn, c.database);
   }
@@ -40,13 +41,16 @@ export class MysqlDriver implements DbDriver {
     }));
   }
 
-  async tableData(schema: string, table: string, limit: number, offset: number): Promise<TableData> {
+  async tableData(schema: string, table: string, limit: number, offset: number, search?: string): Promise<TableData> {
     const columns = await this.columns(table);
     if (!columns.length) throw new Error(`Table ${table} not found`);
     const pk = columns.filter((c) => c.isPrimaryKey).map((c) => q(c.name));
     const order = pk.length ? ' ORDER BY ' + pk.join(', ') : '';
-    const [cnt] = await this.conn.query<any[]>(`SELECT COUNT(*) AS n FROM ${qt(schema, table)}`);
-    const [rows] = await this.conn.query<any[]>(`SELECT * FROM ${qt(schema, table)}${order} LIMIT ? OFFSET ?`, [limit, offset]);
+    const term = search?.trim();
+    const where = term ? ' WHERE ' + columns.map((c) => `CAST(${q(c.name)} AS CHAR) LIKE ?`).join(' OR ') : '';
+    const sp = term ? columns.map(() => '%' + likeEscape(term) + '%') : [];
+    const [cnt] = await this.conn.query<any[]>(`SELECT COUNT(*) AS n FROM ${qt(schema, table)}${where}`, sp);
+    const [rows] = await this.conn.query<any[]>(`SELECT * FROM ${qt(schema, table)}${where}${order} LIMIT ? OFFSET ?`, [...sp, limit, offset]);
     return { columns, rows: rows as Record<string, unknown>[], total: Number(cnt[0].n) };
   }
 
@@ -69,6 +73,25 @@ export class MysqlDriver implements DbDriver {
       await this.conn.commit();
       return res.affectedRows as number;
     } catch (e) { await this.conn.rollback(); throw e; }
+  }
+
+  async runScript(sql: string, commit: boolean): Promise<ScriptResult> {
+    checkScript('mysql', sql, commit);
+    await this.conn.beginTransaction();
+    try {
+      const [rows, fields]: any = await this.conn.query(sql);
+      // One statement: rows/fields belong to it. Several: both are parallel arrays, one entry per statement.
+      const multi = Array.isArray(fields) && fields.every((f: any) => f === undefined || Array.isArray(f));
+      const pairs: [any, any][] = multi ? (rows as any[]).map((r, i) => [r, fields[i]]) : [[rows, fields]];
+      const results = pairs.map(([r, f]) => Array.isArray(f)
+        ? makeResult('SELECT', (r as any[]).length, f.map((c: any) => c.name), (r as any[]).map((row) => f.map((c: any) => row[c.name])))
+        : makeResult('OK', r?.affectedRows ?? null, [], []));
+      if (commit) await this.conn.commit(); else await this.conn.rollback();
+      return { results, committed: commit };
+    } catch (e) {
+      await this.conn.rollback().catch(() => {});
+      throw e;
+    }
   }
 
   async dropTable(schema: string, table: string) {
