@@ -6,6 +6,7 @@ Supports PostgreSQL, MySQL / MariaDB and SQL Server. Each engine is a driver in 
 ## Features
 
 - Save connections (host, port, user, password, database, SSL). Passwords are encrypted with the OS keychain and stay on your computer.
+- Optional built-in SSH tunnel (password or private key), so a database that is closed to the internet can be reached without a separate terminal. With a tunnel, Host/Port are the database address as seen from the SSH server (usually 127.0.0.1:5432).
 - See all tables, their sizes, and the total database size.
 - Browse table data with paging.
 - Add a row, delete a row (by primary key), drop a table.

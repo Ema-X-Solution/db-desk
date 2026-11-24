@@ -2,6 +2,17 @@ export type DbType = 'postgres' | 'mysql' | 'mssql';
 
 export const DEFAULT_PORTS: Record<DbType, number> = { postgres: 5432, mysql: 3306, mssql: 1433 };
 
+export interface SshConfig {
+  enabled: boolean;
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  /** Path to a private key file on this computer (optional). */
+  privateKeyPath: string;
+  passphrase: string;
+}
+
 export interface ConnectionConfig {
   id: string;
   name: string;
@@ -12,6 +23,7 @@ export interface ConnectionConfig {
   password: string;
   database: string;
   ssl: boolean;
+  ssh?: SshConfig;
 }
 
 export interface TableInfo {
