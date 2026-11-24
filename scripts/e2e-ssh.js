@@ -1,0 +1,43 @@
+// Real app + throwaway PostgreSQL behind a fake SSH server (forward-only). Saves screenshots to /tmp/shots-ssh.
+const { app, safeStorage, BrowserWindow } = require('electron');
+safeStorage.isEncryptionAvailable = () => true;
+safeStorage.encryptString = (s) => Buffer.from(s);
+safeStorage.decryptString = (b) => b.toString();
+const EmbeddedPostgres = require('embedded-postgres').default;
+const { Server } = require('ssh2');
+const net = require('net'); const crypto = require('crypto'); const fs = require('fs');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+app.setPath('userData', '/tmp/dbdesk-ud2'); fs.rmSync('/tmp/dbdesk-ud2', { recursive: true, force: true });
+(async () => {
+  fs.rmSync('/tmp/dbdesk-pg4', { recursive: true, force: true });
+  const pg = new EmbeddedPostgres({ databaseDir: '/tmp/dbdesk-pg4', user: 'postgres', password: 'pw', port: 54332, persistent: false });
+  await pg.initialise(); await pg.start(); await pg.createDatabase('az_fashion');
+  const { Client } = require('pg');
+  const c = new Client({ host: '127.0.0.1', port: 54332, user: 'postgres', password: 'pw', database: 'az_fashion' }); await c.connect();
+  await c.query(`CREATE TABLE cash_movement(id serial primary key, note text, amount numeric)`);
+  await c.query(`INSERT INTO cash_movement(note, amount) SELECT 'row '||g, g*5 FROM generate_series(1,30) g`); await c.query('ANALYZE');
+  const { privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs1', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
+  let forwards = 0;
+  const srv = new Server({ hostKeys: [privateKey] }, (client) => {
+    client.on('authentication', (ctx) => (ctx.method === 'password' && ctx.username === 'amr' && ctx.password === 'sshpw' ? ctx.accept() : ctx.reject(['password'])));
+    client.on('ready', () => client.on('tcpip', (accept, _r, info) => { forwards++; const ch = accept(); const s = net.connect(info.destPort, info.destIP); ch.pipe(s).pipe(ch); s.on('error', () => ch.close()); }));
+    client.on('error', () => {});
+  });
+  await new Promise((r) => srv.listen(2223, '127.0.0.1', r));
+  require('../dist/main/main.js'); await app.whenReady(); await sleep(1500);
+  const win = BrowserWindow.getAllWindows()[0];
+  if (win.webContents.isLoading()) await new Promise((r) => win.webContents.once('did-finish-load', r));
+  const js = (s) => win.webContents.executeJavaScript(s);
+  fs.mkdirSync('/tmp/shots-ssh', { recursive: true });
+  const shot = async (n) => { await sleep(500); fs.writeFileSync(`/tmp/shots-ssh/${n}.png`, (await win.webContents.capturePage()).toPNG()); };
+  await js(`document.getElementById('newConn').click()`); await sleep(300);
+  await js(`(()=>{const cb=[...document.querySelectorAll('#dialog label')].find(l=>l.firstChild.textContent.startsWith('Connect through'));const i=cb.querySelector('input');i.checked=true;i.dispatchEvent(new Event('change'));
+    const v={Name:'ERP via SSH','Host':'127.0.0.1',Port:'54332',Database:'az_fashion',User:'postgres',Password:'pw','SSH host':'127.0.0.1','SSH port':'2223','SSH user':'amr','SSH password':'sshpw'};
+    document.querySelectorAll('#dialog label').forEach(l=>{const t=l.firstChild.textContent;const k=Object.keys(v).sort((a,b)=>b.length-a.length).find(k=>t===k||t.startsWith(k+' ')||t===k);const inp=l.querySelector('input');if(k&&inp&&inp.type!=='checkbox')inp.value=v[k];});})()`);
+  await shot('1-ssh-dialog');
+  await js(`[...document.querySelectorAll('#dialog button')].find(b=>b.textContent.startsWith('Save')).click()`); await sleep(2500);
+  await js(`[...document.querySelectorAll('#tableList .item')].find(i=>i.textContent.startsWith('cash_movement')).click()`); await sleep(800);
+  await shot('2-connected-through-ssh');
+  console.log('forwards:', forwards, '| title:', await js(`document.getElementById('title').textContent`));
+  process.exit(0);
+})().catch((e) => { console.error(e); process.exit(1); });

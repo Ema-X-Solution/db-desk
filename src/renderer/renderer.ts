@@ -1,4 +1,5 @@
-interface Conn { id: string; name: string; type: 'postgres' | 'mysql' | 'mssql'; host: string; port: number; user: string; password: string; database: string; ssl: boolean }
+interface Ssh { enabled: boolean; host: string; port: number; user: string; password: string; privateKeyPath: string; passphrase: string }
+interface Conn {ssh?: Ssh;  id: string; name: string; type: 'postgres' | 'mysql' | 'mssql'; host: string; port: number; user: string; password: string; database: string; ssl: boolean }
 interface TableInfo { schema: string; name: string; rowEstimate: number; sizeBytes: number }
 interface Col { name: string; dataType: string; nullable: boolean; hasDefault: boolean; isPrimaryKey: boolean }
 interface TableData { columns: Col[]; rows: Record<string, unknown>[]; total: number }
@@ -89,12 +90,23 @@ function connDialog(existing?: Conn) {
     box.append(field('database', 'Database', 'text', existing?.database ?? ''), field('user', 'User', 'text', existing?.user ?? ''),
       field('password', existing ? 'Password (leave empty to keep)' : 'Password', 'password'));
     const sslL = el('label', {}, 'Use SSL'); const ssl = el('input', { type: 'checkbox' }) as HTMLInputElement; ssl.checked = existing?.ssl ?? false; sslL.append(ssl); box.append(sslL);
+    const sshL = el('label', {}, 'Connect through an SSH tunnel'); const sshOn = el('input', { type: 'checkbox' }) as HTMLInputElement;
+    sshOn.checked = existing?.ssh?.enabled ?? false; sshL.append(sshOn); box.append(sshL);
+    const sshBox = el('div', { class: 'sshbox' }); sshBox.hidden = !sshOn.checked;
+    sshBox.append(el('div', { class: 'muted' }, 'Host above is then the address as seen from the SSH server (usually 127.0.0.1).'));
+    const sr = el('div', { class: 'row' }); sr.append(field('sshHost', 'SSH host', 'text', existing?.ssh?.host ?? ''), field('sshPort', 'SSH port', 'number', String(existing?.ssh?.port ?? 22)));
+    sshBox.append(sr, field('sshUser', 'SSH user', 'text', existing?.ssh?.user ?? ''),
+      field('sshPassword', existing?.ssh ? 'SSH password (leave empty to keep)' : 'SSH password', 'password'),
+      field('sshKey', 'Or private key file path (optional)', 'text', existing?.ssh?.privateKeyPath ?? ''),
+      field('sshPass', 'Key passphrase (optional)', 'password'));
+    box.append(sshBox); sshOn.onchange = () => (sshBox.hidden = !sshOn.checked);
     const a = el('div', { class: 'actions' });
     if (existing) { const rm = el('button', { class: 'danger' }, 'Delete'); rm.onclick = async () => { if (await confirmDialog('Delete saved connection?', existing.name + ' will be removed from this computer. The database itself is not touched.', 'Delete')) { await api.removeConnection(existing.id); close(); renderConns(); } }; a.append(rm); }
     const cancel = el('button', {}, 'Cancel'); cancel.onclick = close;
     const save = el('button', { class: 'primary' }, 'Save & connect');
     save.onclick = async () => {
-      const c: Conn = { id: existing?.id ?? '', name: f.name.value || f.host.value, type: sel.value as Conn['type'], host: f.host.value, port: Number(f.port.value) || PORTS[sel.value], user: f.user.value, password: f.password.value, database: f.database.value, ssl: ssl.checked };
+      const c: Conn = { id: existing?.id ?? '', name: f.name.value || f.host.value, type: sel.value as Conn['type'], host: f.host.value, port: Number(f.port.value) || PORTS[sel.value], user: f.user.value, password: f.password.value, database: f.database.value, ssl: ssl.checked,
+        ssh: { enabled: sshOn.checked, host: f.sshHost.value, port: Number(f.sshPort.value) || 22, user: f.sshUser.value, password: f.sshPassword.value, privateKeyPath: f.sshKey.value, passphrase: f.sshPass.value } };
       const id = await guard(() => api.saveConnection(c)); if (!id) return;
       close(); await renderConns(); openConn(id);
     };
