@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'">
+<title>db-desk</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<aside id="side">
+  <div class="brand">db-desk</div>
+  <div id="connList"></div>
+  <button id="newConn" class="primary wide">+ New connection</button>
+  <div id="tablesBox" hidden>
+    <div class="sect">Tables</div>
+    <div id="dbInfo" class="muted"></div>
+    <div id="tableList"></div>
+  </div>
+</aside>
+<main id="main">
+  <div id="welcome" class="empty">Choose a connection or create a new one.</div>
+  <div id="view" hidden>
+    <div class="bar">
+      <h2 id="title"></h2>
+      <div class="spacer"></div>
+      <button id="addRow">Add row</button>
+      <button id="refresh">Refresh</button>
+      <button id="dropTable" class="danger">Drop table</button>
+    </div>
+    <div class="tablewrap"><table id="grid"></table></div>
+    <div class="bar pager">
+      <button id="prev">Prev</button><span id="pageInfo" class="muted"></span><button id="next">Next</button>
+    </div>
+  </div>
+</main>
+<div id="modal" hidden><div id="dialog"></div></div>
+<div id="toast" hidden></div>
+<script type="module" src="renderer.js"></script>
+</body>
+</html>

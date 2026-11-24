@@ -1,0 +1,22 @@
+{
+  "name": "db-desk",
+  "version": "0.1.0",
+  "description": "Desktop app to browse and manage SQL databases on your server. PostgreSQL first.",
+  "main": "dist/main/main.js",
+  "license": "MIT",
+  "scripts": {
+    "build": "tsc -p tsconfig.main.json && tsc -p tsconfig.renderer.json && node scripts/copy-assets.js",
+    "start": "npm run build && electron .",
+    "test": "npm run build && node scripts/test-driver.js"
+  },
+  "dependencies": {
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.7",
+    "@types/pg": "^8.23.1",
+    "electron": "^45.5.0",
+    "embedded-postgres": "^19.0.0-beta.20",
+    "typescript": "^7.0.2"
+  }
+}
