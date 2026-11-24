@@ -1,6 +1,6 @@
 import * as sql from 'mssql';
 import * as fs from 'fs';
-import { ColumnInfo, ConnectionConfig, DbDriver, TableData, TableInfo } from './types';
+import { ColumnInfo, ConnectionConfig, DbDriver, TableData, TableInfo, likeEscape } from './types';
 
 const q = (id: string) => '[' + id.replace(/]/g, ']]') + ']';
 const qt = (schema: string, table: string) => `${q(schema)}.${q(table)}`;
@@ -53,14 +53,19 @@ export class MssqlDriver implements DbDriver {
     return r.recordset.map((x: any) => ({ name: x.name, dataType: x.type, nullable: !!x.nullable, hasDefault: !!x.has_default, isPrimaryKey: !!x.pk }));
   }
 
-  async tableData(schema: string, table: string, limit: number, offset: number): Promise<TableData> {
+  async tableData(schema: string, table: string, limit: number, offset: number, search?: string): Promise<TableData> {
     const columns = await this.columns(schema, table);
     if (!columns.length) throw new Error(`Table ${schema}.${table} not found`);
     const pk = columns.filter((c) => c.isPrimaryKey).map((c) => q(c.name));
     const order = pk.length ? pk.join(', ') : '(SELECT NULL)';
-    const cnt = await this.req().query(`SELECT COUNT_BIG(*) AS n FROM ${qt(schema, table)}`);
-    const rows = await this.req().input('o', sql.Int, offset).input('l', sql.Int, limit)
-      .query(`SELECT * FROM ${qt(schema, table)} ORDER BY ${order} OFFSET @o ROWS FETCH NEXT @l ROWS ONLY`);
+    const term = search?.trim();
+    const skip = /binary|image|geometry|geography|hierarchyid|timestamp|rowversion/i;
+    const sc = columns.filter((c) => !skip.test(c.dataType));
+    const where = term && sc.length ? ' WHERE ' + sc.map((c) => `CAST(${q(c.name)} AS NVARCHAR(MAX)) LIKE @s ESCAPE '\\'`).join(' OR ') : '';
+    const like = '%' + likeEscape(term || '') + '%';
+    const cnt = await this.req().input('s', sql.NVarChar, like).query(`SELECT COUNT_BIG(*) AS n FROM ${qt(schema, table)}${where}`);
+    const rows = await this.req().input('s', sql.NVarChar, like).input('o', sql.Int, offset).input('l', sql.Int, limit)
+      .query(`SELECT * FROM ${qt(schema, table)}${where} ORDER BY ${order} OFFSET @o ROWS FETCH NEXT @l ROWS ONLY`);
     return { columns, rows: rows.recordset as Record<string, unknown>[], total: Number(cnt.recordset[0].n) };
   }
 

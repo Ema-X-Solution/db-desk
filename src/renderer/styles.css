@@ -42,3 +42,5 @@ input, select { background: #12151c; border: 1px solid #343c4f; border-radius: 6
 .toolrow { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; border-top: 1px solid #262c39; }
 .toolrow .muted { word-break: break-all; }
 button.link { background: none; border: 0; color: #8791a7; text-decoration: underline; }
+#search { width: 260px; padding: 5px 8px; margin-right: 8px; }
+.bar button { white-space: nowrap; }

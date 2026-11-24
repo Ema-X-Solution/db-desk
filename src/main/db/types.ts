@@ -41,6 +41,9 @@ export interface ColumnInfo {
   isPrimaryKey: boolean;
 }
 
+/** Escape LIKE wildcards so the user's text is matched literally. */
+export const likeEscape = (s: string) => s.replace(/[\\%_\[]/g, (m) => '\\' + m);
+
 export interface TableData {
   columns: ColumnInfo[];
   rows: Record<string, unknown>[];
@@ -52,7 +55,8 @@ export interface DbDriver {
   close(): Promise<void>;
   databaseSize(): Promise<number>;
   listTables(): Promise<TableInfo[]>;
-  tableData(schema: string, table: string, limit: number, offset: number): Promise<TableData>;
+  /** `search` (optional) keeps only rows where any column contains the text. Read-only. */
+  tableData(schema: string, table: string, limit: number, offset: number, search?: string): Promise<TableData>;
   insertRow(schema: string, table: string, values: Record<string, string | null>): Promise<void>;
   deleteRow(schema: string, table: string, key: Record<string, unknown>): Promise<number>;
   dropTable(schema: string, table: string): Promise<void>;

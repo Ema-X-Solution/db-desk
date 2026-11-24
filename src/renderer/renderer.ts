@@ -7,7 +7,7 @@ declare const api: {
   listConnections(): Promise<Conn[]>; saveConnection(c: Conn): Promise<string>; removeConnection(id: string): Promise<void>;
   open(id: string): Promise<{ size: number; tables: TableInfo[] }>; close(): Promise<void>;
   tables(): Promise<{ size: number; tables: TableInfo[] }>;
-  data(s: string, t: string, limit: number, offset: number): Promise<TableData>;
+  data(s: string, t: string, limit: number, offset: number, search?: string): Promise<TableData>;
   insert(s: string, t: string, v: Record<string, string | null>): Promise<void>;
   del(s: string, t: string, key: Record<string, unknown>): Promise<number>;
   drop(s: string, t: string): Promise<void>; backup(): Promise<string | null>;
@@ -122,7 +122,7 @@ function renderTables(info: { size: number; tables: TableInfo[] }) {
   for (const t of info.tables) {
     const row = el('div', { class: 'item' + (current && current.schema === t.schema && current.name === t.name ? ' active' : '') });
     row.append(el('span', {}, t.schema === 'public' ? t.name : `${t.schema}.${t.name}`), el('small', {}, bytes(t.sizeBytes)));
-    row.onclick = () => { current = { schema: t.schema, name: t.name }; offset = 0; loadTable(); renderTables(info); };
+    row.onclick = () => { current = { schema: t.schema, name: t.name }; offset = 0; ($('search') as HTMLInputElement).value = ''; loadTable(); renderTables(info); };
     box.append(row);
   }
   const bk = el('button', { class: 'wide' }, 'Backup database…'); bk.style.marginTop = '10px';
@@ -177,10 +177,11 @@ function cellText(v: unknown) {
 
 async function loadTable() {
   if (!current) return;
-  const d = await guard(() => api.data(current!.schema, current!.name, PAGE, offset)); if (!d) return;
+  const term = ($('search') as HTMLInputElement).value.trim();
+  const d = await guard(() => api.data(current!.schema, current!.name, PAGE, offset, term || undefined)); if (!d) return;
   data = d;
   $('welcome').hidden = true; $('view').hidden = false;
-  $('title').textContent = `${current.schema}.${current.name}  (${d.total} rows)`;
+  $('title').textContent = `${current.schema}.${current.name}  (${d.total} rows${term ? ' matching "' + term + '"' : ''})`;
   const grid = $('grid'); grid.replaceChildren();
   const head = el('tr');
   for (const c of d.columns) { const th = el('th', {}, (c.isPrimaryKey ? '[PK] ' : '') + c.name); th.append(el('small', {}, c.dataType)); head.append(th); }
@@ -240,6 +241,8 @@ async function refreshTables() { const i = await guard(() => api.tables()); if (
 $('newConn').onclick = () => connDialog();
 $('addRow').onclick = addRowDialog;
 $('refresh').onclick = () => { loadTable(); refreshTables(); };
+let searchTimer: number | undefined;
+$('search').oninput = () => { clearTimeout(searchTimer); searchTimer = window.setTimeout(() => { offset = 0; loadTable(); }, 300); };
 $('prev').onclick = () => { offset = Math.max(0, offset - PAGE); loadTable(); };
 $('next').onclick = () => { offset += PAGE; loadTable(); };
 $('dropTable').onclick = async () => {

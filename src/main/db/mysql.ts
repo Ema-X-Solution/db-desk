@@ -1,5 +1,5 @@
 import * as mysql from 'mysql2/promise';
-import { ColumnInfo, ConnectionConfig, DbDriver, TableData, TableInfo } from './types';
+import { ColumnInfo, ConnectionConfig, DbDriver, TableData, TableInfo, likeEscape } from './types';
 
 const q = (id: string) => '`' + id.replace(/`/g, '``') + '`';
 const qt = (schema: string, table: string) => `${q(schema)}.${q(table)}`;
@@ -40,13 +40,16 @@ export class MysqlDriver implements DbDriver {
     }));
   }
 
-  async tableData(schema: string, table: string, limit: number, offset: number): Promise<TableData> {
+  async tableData(schema: string, table: string, limit: number, offset: number, search?: string): Promise<TableData> {
     const columns = await this.columns(table);
     if (!columns.length) throw new Error(`Table ${table} not found`);
     const pk = columns.filter((c) => c.isPrimaryKey).map((c) => q(c.name));
     const order = pk.length ? ' ORDER BY ' + pk.join(', ') : '';
-    const [cnt] = await this.conn.query<any[]>(`SELECT COUNT(*) AS n FROM ${qt(schema, table)}`);
-    const [rows] = await this.conn.query<any[]>(`SELECT * FROM ${qt(schema, table)}${order} LIMIT ? OFFSET ?`, [limit, offset]);
+    const term = search?.trim();
+    const where = term ? ' WHERE ' + columns.map((c) => `CAST(${q(c.name)} AS CHAR) LIKE ?`).join(' OR ') : '';
+    const sp = term ? columns.map(() => '%' + likeEscape(term) + '%') : [];
+    const [cnt] = await this.conn.query<any[]>(`SELECT COUNT(*) AS n FROM ${qt(schema, table)}${where}`, sp);
+    const [rows] = await this.conn.query<any[]>(`SELECT * FROM ${qt(schema, table)}${where}${order} LIMIT ? OFFSET ?`, [...sp, limit, offset]);
     return { columns, rows: rows as Record<string, unknown>[], total: Number(cnt[0].n) };
   }
 

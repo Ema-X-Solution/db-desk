@@ -63,7 +63,7 @@ function registerIpc() {
   });
   ipcMain.handle('conn:close', () => closeAll());
   ipcMain.handle('db:tables', async () => ({ size: await need().databaseSize(), tables: await need().listTables() }));
-  ipcMain.handle('db:data', (_e, s: string, t: string, limit: number, offset: number) => need().tableData(s, t, limit, offset));
+  ipcMain.handle('db:data', (_e, s: string, t: string, limit: number, offset: number, search?: string) => need().tableData(s, t, limit, offset, typeof search === 'string' ? search.slice(0, 200) : undefined));
   ipcMain.handle('db:insert', (_e, s: string, t: string, v: Record<string, string | null>) => need().insertRow(s, t, v));
   ipcMain.handle('db:delete', (_e, s: string, t: string, key: Record<string, unknown>) => need().deleteRow(s, t, key));
   ipcMain.handle('db:drop', (_e, s: string, t: string) => need().dropTable(s, t));
