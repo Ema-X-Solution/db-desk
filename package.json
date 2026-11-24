@@ -7,7 +7,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.main.json && tsc -p tsconfig.renderer.json && node scripts/copy-assets.js",
     "start": "npm run build && electron .",
-    "test": "npm run build && node scripts/test-driver.js"
+    "test": "npm run build && node scripts/test-driver.js",
+    "dist": "npm run build && electron-builder --win nsis zip --x64 --publish never"
   },
   "dependencies": {
     "mssql": "^12.8.1",
@@ -20,8 +21,44 @@
     "@types/node": "^26.6.7",
     "@types/pg": "^8.23.1",
     "electron": "^45.5.0",
+    "electron-builder": "^26.18.0",
     "embedded-postgres": "^19.0.0-beta.20",
     "mysql-memory-server": "^1.18.0",
     "typescript": "^7.0.2"
+  },
+  "author": "Ema-X-Solution",
+  "build": {
+    "appId": "com.emaxsolution.dbdesk",
+    "productName": "db-desk",
+    "files": [
+      "dist/**",
+      "package.json",
+      "LICENSE"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "db-desk-Setup-${version}.exe"
+    },
+    "artifactName": "db-desk-${version}-win-x64.${ext}"
   }
 }

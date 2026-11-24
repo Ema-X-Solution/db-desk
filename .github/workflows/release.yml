@@ -1,0 +1,29 @@
+name: Release (Windows)
+
+# Pushing a tag like v0.1.0 builds the Windows installer and zip and attaches them to a GitHub Release.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run dist
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" release/db-desk-Setup-*.exe release/db-desk-*-win-x64.zip \
+            --title "db-desk ${GITHUB_REF_NAME#v} for Windows" \
+            --notes "Windows build of db-desk (PostgreSQL, MySQL/MariaDB, SQL Server). Download db-desk-Setup-*.exe and run it, or use the zip (unzip, run db-desk.exe). Not code-signed: on the Windows SmartScreen warning click More info, then Run anyway. No credentials are included; saved connections stay encrypted in your user profile."

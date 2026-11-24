@@ -3,3 +3,4 @@ dist/
 *.sql
 .env
 out/
+release/
