@@ -1,6 +1,6 @@
 {
   "name": "db-desk",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Desktop app to browse and manage SQL databases on your server. PostgreSQL first.",
   "main": "dist/main/main.js",
   "license": "MIT",
