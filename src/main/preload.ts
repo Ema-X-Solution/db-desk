@@ -14,4 +14,6 @@ contextBridge.exposeInMainWorld('api', {
   del: (s: string, t: string, key: unknown) => call('db:delete', s, t, key),
   drop: (s: string, t: string) => call('db:drop', s, t),
   backup: () => call('db:backup'),
+  toolStatus: () => call('tool:status'),
+  pickTool: (t: string) => call('tool:pick', t),
 });

@@ -1,0 +1,33 @@
+// Real app: pg_dump hidden from detection -> backup shows the "not found" dialog -> pick file -> backup retries and runs the tool.
+const fs = require('fs');
+let hide = true;
+const realStat = fs.statSync;
+fs.statSync = function (p, ...a) { if (hide && /pg_dump(\.exe)?$/.test(String(p))) throw new Error('ENOENT'); return realStat.call(this, p, ...a); };
+const { app, safeStorage, BrowserWindow, dialog } = require('electron');
+safeStorage.isEncryptionAvailable = () => true; safeStorage.encryptString = (s) => Buffer.from(s); safeStorage.decryptString = (b) => b.toString();
+dialog.showOpenDialog = async () => { hide = false; return { canceled: false, filePaths: ['/usr/bin/pg_dump'] }; };
+dialog.showSaveDialog = async () => ({ canceled: false, filePath: '/tmp/e2e-backup.sql' });
+const EmbeddedPostgres = require('embedded-postgres').default;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+app.setPath('userData', '/tmp/dbdesk-ud3'); fs.rmSync('/tmp/dbdesk-ud3', { recursive: true, force: true });
+(async () => {
+  fs.rmSync('/tmp/dbdesk-pg5', { recursive: true, force: true });
+  const pg = new EmbeddedPostgres({ databaseDir: '/tmp/dbdesk-pg5', user: 'postgres', password: 'pw', port: 54333, persistent: false });
+  await pg.initialise(); await pg.start(); await pg.createDatabase('sales');
+  require('../dist/main/main.js'); await app.whenReady(); await sleep(1500);
+  const win = BrowserWindow.getAllWindows()[0];
+  if (win.webContents.isLoading()) await new Promise((r) => win.webContents.once('did-finish-load', r));
+  const js = (s) => win.webContents.executeJavaScript(s);
+  fs.mkdirSync('/tmp/shots-bk', { recursive: true });
+  const shot = async (n) => { await sleep(600); fs.writeFileSync(`/tmp/shots-bk/${n}.png`, (await win.webContents.capturePage()).toPNG()); };
+  await js(`document.getElementById('newConn').click()`); await sleep(300);
+  await js(`(()=>{const v={Name:'Sales VPS',Host:'127.0.0.1',Port:'54333',Database:'sales',User:'postgres',Password:'pw'};
+    document.querySelectorAll('#dialog label').forEach(l=>{const t=l.firstChild.textContent;const k=Object.keys(v).find(k=>t===k);const i=l.querySelector('input');if(k&&i)i.value=v[k];});
+    [...document.querySelectorAll('#dialog button')].find(b=>b.textContent.startsWith('Save')).click()})()`); await sleep(2500);
+  await js(`[...document.querySelectorAll('#tableList button')].find(b=>b.textContent.startsWith('Backup database')).click()`); await sleep(800);
+  await shot('1-tool-not-found');
+  await js(`[...document.querySelectorAll('#dialog button')].find(b=>b.textContent==='Choose file…').click()`); await sleep(2500);
+  await shot('2-after-pick-backup-ran');
+  console.log('toast:', await js(`document.getElementById('toast').textContent`));
+  process.exit(0);
+})().catch((e) => { console.error(e); process.exit(1); });

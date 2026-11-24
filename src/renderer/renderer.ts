@@ -11,6 +11,7 @@ declare const api: {
   insert(s: string, t: string, v: Record<string, string | null>): Promise<void>;
   del(s: string, t: string, key: Record<string, unknown>): Promise<number>;
   drop(s: string, t: string): Promise<void>; backup(): Promise<string | null>;
+  toolStatus(): Promise<{ tool: string; path: string | null }[]>; pickTool(t: string): Promise<string | null>;
 };
 
 const PAGE = 50;
@@ -125,8 +126,41 @@ function renderTables(info: { size: number; tables: TableInfo[] }) {
     box.append(row);
   }
   const bk = el('button', { class: 'wide' }, 'Backup database…'); bk.style.marginTop = '10px';
-  bk.onclick = async () => { const p = await guard(() => api.backup()); if (p) toast('Backup saved: ' + p); };
-  box.append(bk);
+  bk.onclick = () => runBackup();
+  const bt = el('button', { class: 'wide link' }, 'Backup tool path…'); bt.style.marginTop = '6px';
+  bt.onclick = () => toolDialog();
+  box.append(bk, bt);
+}
+
+async function runBackup() {
+  try {
+    const p = await api.backup();
+    if (p) toast('Backup saved: ' + p);
+  } catch (e) {
+    const msg = String((e as Error).message || e);
+    const m = msg.match(/TOOL_NOT_FOUND:(pg_dump|mysqldump)/);
+    if (m) toolDialog(m[1], true); else toast(msg.replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), true);
+  }
+}
+
+/** Shows where the dump tools were found and lets the user pick one with a file dialog. */
+async function toolDialog(missing?: string, retry = false) {
+  const status = await api.toolStatus();
+  dialog((box, close) => {
+    box.append(el('h3', {}, missing ? `${missing} was not found` : 'Backup tools'));
+    if (missing) box.append(el('div', {}, `db-desk looked in PATH and the usual install folders (PostgreSQL, pgAdmin 4). Choose the file yourself, for example pgAdmin 4\\runtime\\${missing}.exe.`));
+    for (const s of status) {
+      const row = el('div', { class: 'toolrow' });
+      row.append(el('div', {}, s.tool), el('div', { class: 'muted' }, s.path ?? 'not found'));
+      const pick = el('button', {}, 'Choose file…');
+      pick.onclick = async () => {
+        const p = await guard(() => api.pickTool(s.tool)); if (!p) return;
+        close(); toast(`${s.tool}: ${p}`); if (retry && s.tool === missing) runBackup(); else toolDialog();
+      };
+      row.append(pick); box.append(row);
+    }
+    const a = el('div', { class: 'actions' }); const c = el('button', {}, 'Close'); c.onclick = close; a.append(c); box.append(a);
+  });
 }
 
 async function openConn(id: string) {
