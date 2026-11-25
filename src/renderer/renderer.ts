@@ -1,4 +1,7 @@
 import { initSqlTab } from './sqlTab.js';
+import { initStatsView } from './statsView.js';
+import { initServerView } from './serverView.js';
+import { bytes, el } from './ui.js';
 
 interface Ssh { enabled: boolean; host: string; port: number; user: string; password: string; privateKeyPath: string; passphrase: string }
 interface Conn {ssh?: Ssh;  id: string; name: string; type: 'postgres' | 'mysql' | 'mssql'; host: string; port: number; user: string; password: string; database: string; ssl: boolean }
@@ -13,28 +16,29 @@ declare const api: {
   insert(s: string, t: string, v: Record<string, string | null>): Promise<void>;
   del(s: string, t: string, key: Record<string, unknown>): Promise<number>;
   script(sql: string, commit: boolean): Promise<{ results: { command: string; rowCount: number | null; columns: string[]; rows: (string | null)[][]; truncated: boolean }[]; committed: boolean }>;
+  dbStats(): Promise<any>;
+  serverSettings(v?: { nginxLog?: string; repoPath?: string }): Promise<{ nginxLog: string; repoPath: string }>;
+  serverStatus(withNginx: boolean): Promise<any>; serverClose(): Promise<void>;
+  gitInfo(): Promise<any>; gitFetch(): Promise<any>; gitPull(): Promise<any>;
   drop(s: string, t: string): Promise<void>; backup(): Promise<string | null>;
   toolStatus(): Promise<{ tool: string; path: string | null }[]>; pickTool(t: string): Promise<string | null>;
 };
 
 const PAGE = 50;
+const PANELS = ['welcome', 'view', 'sqlView', 'statsView', 'serverView'];
+let panel = 'welcome';
+/** Shows exactly one main panel. Leaving the server panel stops its polling and closes its SSH session. */
+function showPanel(id: string) {
+  if (panel === 'serverView' && id !== 'serverView') serverView.stop();
+  panel = id;
+  for (const p of PANELS) document.getElementById(p)!.hidden = p !== id;
+}
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 let activeConn: string | null = null;
 let current: { schema: string; name: string } | null = null;
 let offset = 0;
 let data: TableData | null = null;
 
-function el(tag: string, attrs: Record<string, string> = {}, text = '') {
-  const e = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
-  if (text) e.textContent = text;
-  return e;
-}
-function bytes(n: number) {
-  const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0;
-  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
-  return n.toFixed(i ? 1 : 0) + ' ' + u[i];
-}
 function toast(msg: string, err = false) {
   const t = $('toast'); t.textContent = msg; t.className = err ? 'err' : ''; t.hidden = false;
   setTimeout(() => (t.hidden = true), err ? 7000 : 3500);
@@ -125,7 +129,7 @@ function renderTables(info: { size: number; tables: TableInfo[] }) {
   for (const t of info.tables) {
     const row = el('div', { class: 'item' + (current && current.schema === t.schema && current.name === t.name ? ' active' : '') });
     row.append(el('span', {}, t.schema === 'public' ? t.name : `${t.schema}.${t.name}`), el('small', {}, bytes(t.sizeBytes)));
-    row.onclick = () => { current = { schema: t.schema, name: t.name }; offset = 0; ($('search') as HTMLInputElement).value = ''; sqlTab.hide(); loadTable(); renderTables(info); };
+    row.onclick = () => { current = { schema: t.schema, name: t.name }; offset = 0; ($('search') as HTMLInputElement).value = ''; loadTable(); renderTables(info); };
     box.append(row);
   }
   const bk = el('button', { class: 'wide' }, 'Backup database…'); bk.style.marginTop = '10px';
@@ -168,7 +172,7 @@ async function toolDialog(missing?: string, retry = false) {
 
 async function openConn(id: string) {
   const info = await guard(() => api.open(id)); if (!info) return;
-  sqlTab.reset(); sqlTab.hide(); activeConn = id; current = null; $('view').hidden = true; $('welcome').hidden = false; $('welcome').textContent = 'Connected. Pick a table.';
+  sqlTab.reset(); statsView.reset(); serverView.reset(); activeConn = id; current = null; showPanel('welcome'); $('welcome').textContent = 'Connected. Pick a table.';
   renderTables(info); renderConns();
 }
 
@@ -183,7 +187,7 @@ async function loadTable() {
   const term = ($('search') as HTMLInputElement).value.trim();
   const d = await guard(() => api.data(current!.schema, current!.name, PAGE, offset, term || undefined)); if (!d) return;
   data = d;
-  $('welcome').hidden = true; $('view').hidden = false;
+  showPanel('view');
   $('title').textContent = `${current.schema}.${current.name}  (${d.total} rows${term ? ' matching "' + term + '"' : ''})`;
   const grid = $('grid'); grid.replaceChildren();
   const head = el('tr');
@@ -241,8 +245,12 @@ function addRowDialog() {
 
 async function refreshTables() { const i = await guard(() => api.tables()); if (i) renderTables(i); }
 
-const sqlTab = initSqlTab({ api, $, el, dialog, toast, guard, runBackup, onCommitted: () => { refreshTables(); } });
+const sqlTab = initSqlTab({ api, $, el, dialog, toast, guard, runBackup, showPanel, onCommitted: () => { refreshTables(); } });
+const statsView = initStatsView({ api, $, guard, showPanel });
+const serverView = initServerView({ api, $, guard, toast, showPanel, confirm: (t, b, ok) => confirmDialog(t, b, ok) });
 $('openSql').onclick = () => sqlTab.show();
+$('openStats').onclick = () => statsView.show();
+$('openServer').onclick = () => serverView.show();
 $('newConn').onclick = () => connDialog();
 $('addRow').onclick = addRowDialog;
 $('refresh').onclick = () => { loadTable(); refreshTables(); };
@@ -255,6 +263,6 @@ $('dropTable').onclick = async () => {
   const c = current;
   if (!(await confirmDialog('Drop table?', `This permanently deletes ${c.schema}.${c.name} and all its rows. Take a backup first if you are not sure.`, 'Drop table', c.name))) return;
   const done = await guard(async () => { await api.drop(c.schema, c.name); return true; });
-  if (done) { toast('Table dropped'); current = null; $('view').hidden = true; $('welcome').hidden = false; refreshTables(); }
+  if (done) { toast('Table dropped'); current = null; showPanel('welcome'); refreshTables(); }
 };
 renderConns();

@@ -1,0 +1,63 @@
+// Runs the real app under Electron against a throwaway PostgreSQL and saves screenshots.
+const { app, safeStorage } = require('electron');
+safeStorage.isEncryptionAvailable = () => true; // no OS keyring in CI/headless
+safeStorage.encryptString = (s) => Buffer.from(s);
+safeStorage.decryptString = (b) => b.toString();
+const EmbeddedPostgres = require('embedded-postgres').default;
+const { BrowserWindow } = require('electron');
+const fs = require('fs');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+app.setPath('userData', '/tmp/dbdesk-ud'); fs.rmSync('/tmp/dbdesk-ud', { recursive: true, force: true });
+app.commandLine.appendSwitch('no-sandbox');
+(async () => {
+  const pg = new EmbeddedPostgres({ databaseDir: '/tmp/dbdesk-pg-demo', user: 'postgres', password: 'pw', port: 54340, persistent: false });
+  fs.rmSync('/tmp/dbdesk-pg-demo', { recursive: true, force: true });
+  await pg.initialise(); await pg.start(); await pg.createDatabase('demo_erp');
+  const { Client } = require('pg');
+  const c = new Client({ host: '127.0.0.1', port: 54340, user: 'postgres', password: 'pw', database: 'demo_erp' }); await c.connect();
+  await c.query(`CREATE TABLE customers(id serial primary key, name text not null, city text, phone text, created date default current_date)`);
+  await c.query(`CREATE TABLE products(id serial primary key, name text not null, price numeric(10,2), in_stock boolean default true)`);
+  await c.query(`CREATE TABLE orders(id serial primary key, customer_id int references customers(id), total numeric(10,2), status text, ordered_at timestamp default now())`);
+  const names = ['Sara Ali','Mona Hassan','Omar Khaled','Laila Samir','Youssef Adel','Nour Fathy','Hany Mostafa','Dina Ashraf','Karim Ezzat','Rania Gamal'];
+  const cities = ['Alexandria','Cairo','Giza','Mansoura','Tanta'];
+  for (let n = 0; n < 60; n++) await c.query('INSERT INTO customers(name, city, phone) VALUES ($1,$2,$3)', [names[n % 10] + (n >= 10 ? ' ' + (n / 10 | 0) : ''), cities[n % 5], '010' + String(10000000 + n * 7919).slice(0, 8)]);
+  for (const t of ['Test Customer A', 'test user', 'TEST import row', 'Demo test account']) await c.query('INSERT INTO customers(name, city, phone) VALUES ($1,$2,$3)', [t, 'Cairo', '0100000000']);
+  await c.query(`INSERT INTO products(name, price) SELECT 'Dress model '||g, 250 + g*15 FROM generate_series(1,40) g`);
+  await c.query(`INSERT INTO orders(customer_id, total, status) SELECT (g % 60) + 1, 100 + g*13.5, (ARRAY['paid','pending','shipped'])[g % 3 + 1] FROM generate_series(1,150) g`);
+  await c.query('ANALYZE');
+  require('../dist/main/main.js');
+  await app.whenReady(); await sleep(1500);
+  const win = BrowserWindow.getAllWindows()[0];
+  win.webContents.on('console-message', (_e, _l, m) => console.log('[renderer]', m));
+  if (win.webContents.isLoading()) await new Promise((r) => win.webContents.once('did-finish-load', r));
+  const js = (s) => win.webContents.executeJavaScript(s).catch((e) => { console.log('JSFAIL', s.slice(0, 80), e.message); throw e; });
+  const shot = async (n) => { await sleep(500); fs.writeFileSync(`/tmp/demo-shots/${n}.png`, (await win.webContents.capturePage()).toPNG()); };
+  fs.mkdirSync('/tmp/demo-shots', { recursive: true });
+  console.log('READY', Date.now());
+  win.setBounds({ x: 0, y: 0, width: 1280, height: 800 });
+  const click = (sel) => js(`(${JSON.stringify(sel)}.startsWith('#')?document.querySelector(${JSON.stringify(sel)}):null).click()`);
+  const typeInto = async (id, text, delay) => {
+    for (let n = 1; n <= text.length; n++) { await js(`(()=>{const s=document.getElementById('${id}');s.value=${JSON.stringify(text)}.slice(0,${n});s.dispatchEvent(new Event('input'))})()`); await sleep(delay); }
+  };
+  const table = (name) => js(`[...document.querySelectorAll('#tableList .item')].find(i=>i.textContent.startsWith('${name}')).click()`);
+  await sleep(2500);
+  await click('#newConn'); await sleep(1200);
+  await js(`(()=>{const v={Name:'Demo ERP (fake data)',Host:'127.0.0.1',Port:'54340',Database:'demo_erp',User:'postgres',Password:'pw'};
+    document.querySelectorAll('#dialog label').forEach(l=>{const k=Object.keys(v).find(k=>l.firstChild.textContent.startsWith(k));const i=l.querySelector('input');if(k&&i)i.value=v[k];});})()`);
+  await sleep(2500); await shot('1-new-connection');
+  await js(`[...document.querySelectorAll('#dialog button')].find(b=>b.textContent.startsWith('Save')).click()`); await sleep(1800);
+  await js(`document.querySelector('#connList .item').click()`); await sleep(2500); await shot('2-tables-and-sizes');
+  await table('customers'); await sleep(2500); await shot('3-table-data');
+  await typeInto('search', 'test', 400); await sleep(3000); await shot('4-search-test');
+  await typeInto('search', '', 1); await typeInto('search', 'alex', 300); await sleep(2500);
+  await typeInto('search', '', 1); await sleep(1000);
+  await table('orders'); await sleep(2000);
+  await click('#openSql'); await sleep(1500);
+  await typeInto('sqlText', "-- Cleanup: remove test customers (dry run first)\nDELETE FROM customers WHERE name ILIKE '%test%';\nSELECT count(*) AS customers_left FROM customers;", 35);
+  await sleep(1500); await click('#sqlDry'); await sleep(4000); await shot('5-sql-dry-run');
+  await table('customers'); await sleep(3500);
+  await shot('6-data-unchanged');
+  await sleep(1000);
+  const left = (await c.query('SELECT count(*)::int n FROM customers')).rows[0].n; console.log('customers in db after demo:', left);
+  process.exit(0);
+})();

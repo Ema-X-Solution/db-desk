@@ -13,6 +13,7 @@ export interface SqlTabDeps {
   /** Runs a call, shows errors as a toast and returns undefined on failure. */
   guard: <T>(fn: () => Promise<T>) => Promise<T | undefined>;
   runBackup: () => Promise<void>;
+  showPanel: (id: string) => void;
   /** Called after a committed script so the table list and sizes refresh. */
   onCommitted: () => void;
 }
@@ -99,10 +100,9 @@ export function initSqlTab(d: SqlTabDeps) {
 
   return {
     show() {
-      $('welcome').hidden = true; $('view').hidden = true; $('sqlView').hidden = false;
+      d.showPanel('sqlView');
       sync();
     },
-    hide() { $('sqlView').hidden = true; },
     /** New connection: clear everything so a script is never run against the wrong database by accident. */
     reset() { text.value = ''; out.replaceChildren(); dryRunOk = null; setStatus('', ''); sync(); },
   };

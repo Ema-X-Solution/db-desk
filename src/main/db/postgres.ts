@@ -1,6 +1,6 @@
 import { Client } from 'pg';
 import { checkScript, makeResult, ScriptResult } from './script';
-import { ColumnInfo, ConnectionConfig, DbDriver, TableData, TableInfo, likeEscape } from './types';
+import { DbStats, ColumnInfo, ConnectionConfig, DbDriver, TableData, TableInfo, likeEscape } from './types';
 
 const q = (id: string) => '"' + id.replace(/"/g, '""') + '"';
 const qt = (schema: string, table: string) => `${q(schema)}.${q(table)}`;
@@ -95,6 +95,42 @@ export class PostgresDriver implements DbDriver {
       await this.client.query('ROLLBACK');
       throw e;
     }
+  }
+
+  /** Read-only SELECTs against the system views. Needs no special rights, except slow-query history. */
+  async stats(): Promise<DbStats> {
+    const one = async (sql: string) => (await this.client.query(sql)).rows;
+    const [{ v, up, mx }] = await one(`SELECT version() AS v, extract(epoch FROM now() - pg_postmaster_start_time())::bigint AS up, current_setting('max_connections')::int AS mx`);
+    const tables = (await this.listTables()).sort((a, b) => b.sizeBytes - a.sizeBytes).slice(0, 10);
+    const conn = await one(`SELECT count(*)::int AS total, count(*) FILTER (WHERE state = 'active')::int AS active,
+        count(*) FILTER (WHERE state LIKE 'idle%')::int AS idle FROM pg_stat_activity WHERE backend_type = 'client backend'`);
+    const [h] = await one(`SELECT blks_hit, blks_read, xact_commit, xact_rollback, deadlocks FROM pg_stat_database WHERE datname = current_database()`);
+    const hit = Number(h.blks_hit), read = Number(h.blks_read);
+    let slow: DbStats['slow'] | null = null;
+    const ext = await one(`SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements'`);
+    if (ext.length) {
+      try {
+        const rows = await one(`SELECT query, calls, mean_exec_time AS mean, total_exec_time AS total FROM pg_stat_statements
+          WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database()) ORDER BY mean_exec_time DESC LIMIT 10`);
+        slow = { source: 'history', note: 'Slowest by average time, since the statistics were last reset.',
+          rows: rows.map((r) => ({ query: String(r.query).slice(0, 400), calls: Number(r.calls), meanMs: Number(r.mean), totalMs: Number(r.total) })) };
+      } catch { /* no permission: fall back to running queries */ }
+    }
+    if (!slow) {
+      const rows = await one(`SELECT query, extract(epoch FROM now() - query_start) * 1000 AS ms FROM pg_stat_activity
+        WHERE state = 'active' AND pid <> pg_backend_pid() AND backend_type = 'client backend' AND datname = current_database()
+        ORDER BY query_start LIMIT 10`);
+      slow = { source: 'running', rows: rows.map((r) => ({ query: String(r.query).slice(0, 400), calls: null, meanMs: Number(r.ms), totalMs: null })),
+        note: ext.length ? 'No permission to read the query history (pg_stat_statements). Showing queries running right now.'
+          : 'Query history is off: the pg_stat_statements extension is not installed on this database. Showing queries running right now.' };
+    }
+    return {
+      version: String(v).replace(/ on .*/, ''), uptimeSec: Number(up), sizeBytes: await this.databaseSize(),
+      biggestTables: tables.map((t) => ({ schema: t.schema, name: t.name, sizeBytes: t.sizeBytes, rows: t.rowEstimate })),
+      connections: { current: conn[0].total, active: conn[0].active, idle: conn[0].idle, max: mx },
+      health: { cacheHitPercent: hit + read > 0 ? (hit / (hit + read)) * 100 : null, commits: Number(h.xact_commit), rollbacks: Number(h.xact_rollback), deadlocks: Number(h.deadlocks) },
+      slow,
+    };
   }
 
   async runScript(sql: string, commit: boolean): Promise<ScriptResult> {
