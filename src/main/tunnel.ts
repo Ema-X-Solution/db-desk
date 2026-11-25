@@ -1,7 +1,7 @@
 import { Client } from 'ssh2';
-import * as fs from 'fs';
 import * as net from 'net';
 import { SshConfig } from './db/types';
+import { sshConnectOptions } from './ssh';
 
 export interface Tunnel { localPort: number; close(): void }
 
@@ -32,13 +32,8 @@ export function openTunnel(cfg: SshConfig, dstHost: string, dstPort: number): Pr
     ssh.on('error', (e) => reject(new Error('SSH tunnel failed: ' + e.message)));
     ssh.on('close', () => server?.close());
 
-    let privateKey: Buffer | undefined;
-    try { if (cfg.privateKeyPath) privateKey = fs.readFileSync(cfg.privateKeyPath); }
-    catch (e) { reject(new Error('Cannot read the SSH private key file: ' + (e as Error).message)); return; }
-    ssh.connect({
-      host: cfg.host, port: cfg.port || 22, username: cfg.user,
-      password: cfg.password || undefined, privateKey, passphrase: cfg.passphrase || undefined,
-      readyTimeout: 10000, keepaliveInterval: 15000,
-    });
+    let opts;
+    try { opts = sshConnectOptions(cfg); } catch (e) { reject(e); return; }
+    ssh.connect(opts);
   });
 }

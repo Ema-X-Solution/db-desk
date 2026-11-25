@@ -46,6 +46,21 @@ export interface ColumnInfo {
 /** Escape LIKE wildcards so the user's text is matched literally. */
 export const likeEscape = (s: string) => s.replace(/[\\%_\[]/g, (m) => '\\' + m);
 
+export interface DbStats {
+  version: string;
+  uptimeSec: number | null;
+  sizeBytes: number;
+  biggestTables: { schema: string; name: string; sizeBytes: number; rows: number }[];
+  connections: { current: number; active: number; idle: number; max: number | null };
+  health: { cacheHitPercent: number | null; commits: number; rollbacks: number; deadlocks: number };
+  slow: {
+    /** history = pg_stat_statements totals since reset; running = queries running right now. */
+    source: 'history' | 'running';
+    note: string | null;
+    rows: { query: string; calls: number | null; meanMs: number; totalMs: number | null }[];
+  };
+}
+
 export interface TableData {
   columns: ColumnInfo[];
   rows: Record<string, unknown>[];
@@ -62,6 +77,8 @@ export interface DbDriver {
   insertRow(schema: string, table: string, values: Record<string, string | null>): Promise<void>;
   deleteRow(schema: string, table: string, key: Record<string, unknown>): Promise<number>;
   dropTable(schema: string, table: string): Promise<void>;
+  /** Read-only health numbers. Only some engines implement it. */
+  stats?(): Promise<DbStats>;
   /**
    * Runs a multi-statement script in ONE transaction. commit=false always rolls back (dry run).
    * Any error rolls everything back and is thrown. Call checkScript first.
